@@ -1,0 +1,41 @@
+:root {
+  --puerfons-gold: #9c7a3c;
+  --puerfons-gold-dark: #7e622f;
+  --puerfons-dark: #1a1a1a;
+  --puerfons-bg: #faf8f5;
+  --puerfons-white: #ffffff;
+  --puerfons-text: #1f1f1f;
+  --puerfons-muted: #6b6b6b;
+  --puerfons-border: #e5ded2;
+  --puerfons-error: #b3261e;
+  --puerfons-error-bg: #fdecea;
+  --puerfons-success-bg: #f1ece0;
+  --puerfons-success-text: #5a4420;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  background: var(--puerfons-bg);
+  color: var(--puerfons-text);
+  font-family:
+    -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial,
+    sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+a {
+  color: var(--puerfons-gold-dark);
+}
+
+button {
+  font-family: inherit;
+}
