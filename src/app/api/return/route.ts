@@ -4,6 +4,42 @@ import { createReturnShipment, fetchLabelForShipment } from "@/lib/webshipper";
 import { env } from "@/lib/env";
 import { RETURN_REASONS, type ReturnRequest, type ReturnRequestResult } from "@/lib/types";
 
+// Ongoing sin faktiske enhet for lengde/bredde/høyde på artikler er IKKE
+// bekreftet (se kommentar i lib/ongoing.ts) - koden antar meter og ganger med
+// 100 for å få cm. Hvis artikkelen faktisk er registrert i cm (eller en annen
+// enhet) i Ongoing, blir dette tallet urealistisk stort, og Webshipper avviser
+// hele forsendelsen ("package is too large"), slik det skjedde for Puer Fons
+// (Ny) 2026-10-06 med artikkelen "For Him". For å unngå at én feilregistrert
+// artikkel i Ongoing stopper hele returflyten, faller vi tilbake på
+// standardmålene/-vekten når det beregnede tallet er urealistisk stort (eller
+// urealistisk lite) for et enkeltstykke kosttilskudd/forbruksvare.
+const MAX_REASONABLE_DIMENSION_CM = 150;
+const MAX_REASONABLE_WEIGHT_KG = 30;
+
+function safeDimensionCm(valueM: number | undefined, fallbackCm: number): number {
+  if (!valueM) return fallbackCm;
+  const cm = valueM * 100;
+  if (!Number.isFinite(cm) || cm <= 0 || cm > MAX_REASONABLE_DIMENSION_CM) {
+    console.warn(
+      `[api/return] Ignorerer urealistisk mål fra Ongoing (${cm} cm, rå verdi ${valueM} m) - bruker standardmål ${fallbackCm} cm i stedet.`
+    );
+    return fallbackCm;
+  }
+  return cm;
+}
+
+function safeWeightGrams(valueKg: number | undefined, fallbackGrams: number): number {
+  if (!valueKg) return fallbackGrams;
+  const grams = valueKg * 1000;
+  if (!Number.isFinite(grams) || grams <= 0 || valueKg > MAX_REASONABLE_WEIGHT_KG) {
+    console.warn(
+      `[api/return] Ignorerer urealistisk vekt fra Ongoing (${valueKg} kg) - bruker standardvekt ${fallbackGrams} g i stedet.`
+    );
+    return fallbackGrams;
+  }
+  return grams;
+}
+
 export async function POST(req: NextRequest) {
   try {
     const body = (await req.json()) as ReturnRequest;
@@ -50,10 +86,10 @@ export async function POST(req: NextRequest) {
         articleNumber: line.articleNumber,
         description: line.articleNumber,
         quantity: line.quantity,
-        weightGrams: info?.weightKg ? info.weightKg * 1000 : env.defaultItemWeightGrams,
-        lengthCm: info?.lengthM ? info.lengthM * 100 : env.defaultItemLengthCm,
-        widthCm: info?.widthM ? info.widthM * 100 : env.defaultItemWidthCm,
-        heightCm: info?.heightM ? info.heightM * 100 : env.defaultItemHeightCm,
+        weightGrams: safeWeightGrams(info?.weightKg, env.defaultItemWeightGrams),
+        lengthCm: safeDimensionCm(info?.lengthM, env.defaultItemLengthCm),
+        widthCm: safeDimensionCm(info?.widthM, env.defaultItemWidthCm),
+        heightCm: safeDimensionCm(info?.heightM, env.defaultItemHeightCm),
       };
     });
 
