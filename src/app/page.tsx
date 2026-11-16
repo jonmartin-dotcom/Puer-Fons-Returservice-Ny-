@@ -8,6 +8,7 @@ import {
   type OrderLineForCustomer,
   type ReturnReasonCode,
   type ReturnRequestResult,
+  type DeliveryMethod,
 } from "@/lib/types";
 
 type Step = 1 | 2 | 3 | 4;
@@ -102,12 +103,19 @@ export default function Home() {
     setStep(3);
   }
 
-  async function handleSubmitReturn(e: React.FormEvent) {
-    e.preventDefault();
+  async function handleSubmitReturn(deliveryMethod: DeliveryMethod) {
     setError(null);
 
     if (!firstName || !lastName || !phone || !email || !street || !postalCode || !city) {
       setError("Fyll ut alle feltene under.");
+      return;
+    }
+
+    // QR-koden sendes direkte til kunden på e-post av Bring (ikke SMS - Bring
+    // sender ikke SMS for norske returer) - e-postfeltet er derfor kritisk
+    // for dette valget spesielt (det er uansett påkrevd over).
+    if (deliveryMethod === "QR" && !email) {
+      setError("E-post må fylles ut for å sende QR-kode.");
       return;
     }
 
@@ -132,6 +140,7 @@ export default function Home() {
               quantity: l.quantity,
             })),
           address: { street, postalCode, city, countryCode },
+          deliveryMethod,
         }),
       });
       const data: ReturnRequestResult = await res.json();
@@ -281,7 +290,7 @@ export default function Home() {
         )}
 
         {step === 3 && (
-          <form onSubmit={handleSubmitReturn}>
+          <div>
             <h1 className={styles.title}>Dine kontaktopplysninger</h1>
             <p className={styles.subtitle}>
               Vi bruker denne informasjonen til å lage returetiketten din.
@@ -382,19 +391,37 @@ export default function Home() {
               </div>
             </div>
 
+            <div className={styles.field}>
+              <label className={styles.label}>Hvordan vil du motta returen?</label>
+            </div>
+
             <div className={styles.buttonRow}>
               <button
                 type="button"
                 className={styles.secondaryButton}
                 onClick={() => setStep(2)}
+                disabled={loading}
               >
                 Tilbake
               </button>
-              <button className={styles.button} type="submit" disabled={loading}>
-                {loading ? "Sender…" : "Send returforespørsel"}
+              <button
+                type="button"
+                className={styles.secondaryButton}
+                onClick={() => handleSubmitReturn("LABEL")}
+                disabled={loading}
+              >
+                {loading ? "Sender…" : "Last ned etikett"}
+              </button>
+              <button
+                type="button"
+                className={styles.button}
+                onClick={() => handleSubmitReturn("QR")}
+                disabled={loading}
+              >
+                {loading ? "Sender…" : "Send QR-kode på e-post"}
               </button>
             </div>
-          </form>
+          </div>
         )}
 
         {step === 4 && result?.success && (
@@ -412,24 +439,52 @@ export default function Home() {
 
             {result.warning && <div className={styles.warningBox}>{result.warning}</div>}
 
-            {result.labelPdfBase64 && (
-              <a
-                className={styles.downloadLink}
-                href={`data:application/pdf;base64,${result.labelPdfBase64}`}
-                download={`returetikett-${result.returnOrderNumber}.pdf`}
-              >
-                Last ned returetikett (PDF)
-              </a>
-            )}
-            {!result.labelPdfBase64 && result.labelUrl && (
-              <a
-                className={styles.downloadLink}
-                href={result.labelUrl}
-                target="_blank"
-                rel="noreferrer"
-              >
-                Åpne returetikett
-              </a>
+            {result.deliveryMethod === "QR" ? (
+              <>
+                <p className={styles.subtitle}>
+                  QR-koden sendes også til deg på e-post fra Bring. Vis den i
+                  utleveringsappen eller på skjermen din når du leverer pakken hos et
+                  Bring-utleveringssted.
+                </p>
+                {result.qrCodeLink && (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img
+                    src={result.qrCodeLink}
+                    alt="QR-kode for retur"
+                    width={180}
+                    height={180}
+                    style={{ margin: "0 auto 16px", display: "block" }}
+                  />
+                )}
+                {result.labelFreeCode && (
+                  <p className={styles.subtitle}>
+                    Alternativt kan du oppgi denne koden hos utleveringsstedet:{" "}
+                    <strong>{result.labelFreeCode}</strong>
+                  </p>
+                )}
+              </>
+            ) : (
+              <>
+                {result.labelPdfBase64 && (
+                  <a
+                    className={styles.downloadLink}
+                    href={`data:application/pdf;base64,${result.labelPdfBase64}`}
+                    download={`returetikett-${result.returnOrderNumber}.pdf`}
+                  >
+                    Last ned returetikett (PDF)
+                  </a>
+                )}
+                {!result.labelPdfBase64 && result.labelUrl && (
+                  <a
+                    className={styles.downloadLink}
+                    href={result.labelUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                  >
+                    Åpne returetikett
+                  </a>
+                )}
+              </>
             )}
           </div>
         )}
