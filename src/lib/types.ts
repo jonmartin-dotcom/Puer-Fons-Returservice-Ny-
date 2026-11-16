@@ -48,6 +48,11 @@ export interface OrderLookupNotFound {
 
 export type OrderLookupResponse = OrderLookupResult | OrderLookupNotFound;
 
+// Hvordan kunden ønsker å motta returforsendelsen fra Bring:
+// LABEL = vanlig PDF-etikett for utskrift, QR = QR-kode sendt på e-post
+// (Bring sin etikettfrie løsning - vises/skannes i utleveringsappen eller på skjerm).
+export type DeliveryMethod = "LABEL" | "QR";
+
 // Én linje kunden faktisk ønsker å returnere, med antall.
 export interface ReturnLineSelection {
   orderLineId: number;
@@ -71,6 +76,9 @@ export interface ReturnRequest {
     city: string;
     countryCode: string; // f.eks. "NO"
   };
+  /** Hvilken leveringsmåte kunden valgte for returforsendelsen. Mangler feltet
+   *  (eldre klient), antas LABEL for bakoverkompatibilitet. */
+  deliveryMethod?: DeliveryMethod;
 }
 
 export interface ReturnRequestResult {
@@ -80,8 +88,15 @@ export interface ReturnRequestResult {
   trackingNumber?: string;
   labelPdfBase64?: string;
   labelUrl?: string;
+  /** Kun satt ved deliveryMethod "QR" - lenke til en PNG av selve QR-koden. */
+  qrCodeLink?: string;
+  /** Kun satt ved deliveryMethod "QR" - kode kunden kan skrive på pakken manuelt
+   *  hvis QR-skanning ikke er tilgjengelig. */
+  labelFreeCode?: string;
   error?: string;
   /** Ikke-kritisk advarsel som fortsatt lar returen regnes som vellykket, f.eks. at
    *  etiketten ikke kunne hentes automatisk selv om forsendelsen ble opprettet. */
   warning?: string;
+  /** Ekko av hvilken leveringsmåte som faktisk ble brukt. */
+  deliveryMethod?: DeliveryMethod;
 }
