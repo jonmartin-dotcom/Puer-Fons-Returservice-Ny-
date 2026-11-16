@@ -1,18 +1,15 @@
 import { NextRequest, NextResponse } from "next/server";
 import { lookupOrderByNumber, getArticlePackageInfo, createReturnOrder } from "@/lib/ongoing";
-import { createReturnShipment, fetchLabelForShipment } from "@/lib/webshipper";
+import { createReturnShipment } from "@/lib/bring";
 import { env } from "@/lib/env";
 import { RETURN_REASONS, type ReturnRequest, type ReturnRequestResult } from "@/lib/types";
 
 // Ongoing sin faktiske enhet for lengde/bredde/høyde på artikler er IKKE
-// bekreftet (se kommentar i lib/ongoing.ts) - koden antar meter og ganger med
-// 100 for å få cm. Hvis artikkelen faktisk er registrert i cm (eller en annen
-// enhet) i Ongoing, blir dette tallet urealistisk stort, og Webshipper avviser
-// hele forsendelsen ("package is too large"), slik det skjedde for Puer Fons
-// (Ny) 2026-10-06 med artikkelen "For Him". For å unngå at én feilregistrert
-// artikkel i Ongoing stopper hele returflyten, faller vi tilbake på
-// standardmålene/-vekten når det beregnede tallet er urealistisk stort (eller
-// urealistisk lite) for et enkeltstykke kosttilskudd/forbruksvare.
+// bekreftet (samme svakhet som ble funnet og fikset for Puer Fons (Ny) og
+// senere bygget inn fra start i Inneklimaeksperten/Coverly/Nesco/Vitae Vital
+// - se prosjektnotatet). Bygget inn her fra start i forbindelse med
+// Bring-omleggingen: faller tilbake på standardmål/-vekt hvis det beregnede
+// tallet er urealistisk stort, i stedet for å sende et feil tall til Bring.
 const MAX_REASONABLE_DIMENSION_CM = 150;
 const MAX_REASONABLE_WEIGHT_KG = 30;
 
@@ -43,6 +40,7 @@ function safeWeightGrams(valueKg: number | undefined, fallbackGrams: number): nu
 export async function POST(req: NextRequest) {
   try {
     const body = (await req.json()) as ReturnRequest;
+    const deliveryMethod = body.deliveryMethod === "QR" ? "QR" : "LABEL";
 
     if (
       !body?.orderNumber ||
@@ -59,6 +57,19 @@ export async function POST(req: NextRequest) {
     ) {
       return NextResponse.json<ReturnRequestResult>(
         { success: false, error: "Mangler nødvendig informasjon i returforespørselen." },
+        { status: 400 }
+      );
+    }
+
+    // QR-kode-returen sendes direkte til kunden på e-post av Bring, og
+    // kunden må derfor ha oppgitt e-post - allerede påkrevd i skjemaet, men
+    // vi sjekker eksplisitt siden det er kritisk for denne leveringsmåten.
+    if (deliveryMethod === "QR" && !body.email) {
+      return NextResponse.json<ReturnRequestResult>(
+        {
+          success: false,
+          error: "E-post må fylles ut for å sende QR-kode.",
+        },
         { status: 400 }
       );
     }
@@ -95,7 +106,8 @@ export async function POST(req: NextRequest) {
 
     const returnOrderNumber = `RET-${body.orderNumber}-${Date.now().toString().slice(-6)}`;
 
-    // 1) Opprett returforsendelse hos Webshipper (for etikett/henting).
+    // 1) Opprett returforsendelse direkte hos Bring - med riktig produktkode
+    // ut fra om kunden valgte PDF-etikett (9300) eller QR-kode-retur (9350).
     let shipment;
     try {
       shipment = await createReturnShipment({
@@ -110,13 +122,17 @@ export async function POST(req: NextRequest) {
         },
         items: shipmentItems,
         referenceText: returnOrderNumber,
+        deliveryMethod,
       });
     } catch (err) {
-      console.error("[api/return] Webshipper-feil:", err);
+      console.error("[api/return] Bring-feil:", err);
       return NextResponse.json<ReturnRequestResult>(
         {
           success: false,
-          error: "Klarte ikke å opprette returetiketten. Vennligst prøv igjen om litt.",
+          error:
+            deliveryMethod === "QR"
+              ? "Klarte ikke å opprette QR-returen. Vennligst prøv igjen om litt."
+              : "Klarte ikke å opprette returetiketten. Vennligst prøv igjen om litt.",
         },
         { status: 502 }
       );
@@ -131,7 +147,7 @@ export async function POST(req: NextRequest) {
       reasonLabel,
       comment: body.message || "",
       lines: body.lines,
-      trackingNumber: shipment.trackingNumber,
+      trackingNumber: shipment.consignmentNumber,
     });
 
     if (!ongoingResult.success) {
@@ -146,21 +162,28 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // 3) Best-effort: hent etiketten (kort retry-budsjett, ikke kritisk).
-    const label = await fetchLabelForShipment(shipment.shipmentId);
-
+    // Bring returnerer etikett/QR-kode direkte i bookingsvaret (synkront) -
+    // ingen egen "hent etikett etterpå"-runde nødvendig slik det var med
+    // Webshipper.
     const result: ReturnRequestResult = {
       success: true,
       returnOrderId: ongoingResult.returnOrderId,
       returnOrderNumber,
-      trackingNumber: shipment.trackingNumber,
-      labelPdfBase64: label.labelPdfBase64,
-      labelUrl: label.labelUrl,
+      trackingNumber: shipment.consignmentNumber,
+      deliveryMethod,
+      labelPdfBase64: shipment.labelPdfBase64,
+      labelUrl: shipment.labelUrl,
+      qrCodeLink: shipment.qrCodeLink,
+      labelFreeCode: shipment.labelFreeCode,
     };
 
-    if (!label.labelPdfBase64 && !label.labelUrl) {
+    if (deliveryMethod === "LABEL" && !shipment.labelPdfBase64 && !shipment.labelUrl) {
       result.warning =
         "Returen er registrert, men etiketten kunne ikke hentes akkurat nå. Du vil få den tilsendt på e-post.";
+    }
+    if (deliveryMethod === "QR" && !shipment.qrCodeLink && !shipment.labelFreeCode) {
+      result.warning =
+        "Returen er registrert, men QR-koden kunne ikke hentes akkurat nå. Du vil få den tilsendt på e-post fra Bring.";
     }
 
     return NextResponse.json<ReturnRequestResult>(result);
